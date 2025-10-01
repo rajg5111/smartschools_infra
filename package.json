@@ -1,0 +1,25 @@
+{
+  "name": "smartschools_infra",
+  "version": "0.1.0",
+  "bin": {
+    "smartschools_infra": "bin/smartschools_infra.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.9",
+    "vitest": "^2.1.2",
+    "aws-cdk": "2.1029.3",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.6.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.215.0",
+    "constructs": "^10.0.0"
+  }
+}
