@@ -51,10 +51,10 @@ new SmartschoolsInfraStack(app, stackName, {
   // Don't specify env - this makes the stack environment-agnostic
   // CDK will automatically use the current AWS credentials and region
   // Comment out env to make it environment-agnostic
-  env: {
-    account: process.env.AWS_DEFAULT_ACCOUNT,
-    region: process.env.AWS_DEFAULT_REGION,
-  },
+  // env: {
+  //   account: process.env.AWS_DEFAULT_ACCOUNT,
+  //   region: process.env.AWS_DEFAULT_REGION,
+  // },
 
   // Stack description with context
   description: `SmartSchools Infrastructure Stack - ${context.state} (${context.environment})`,

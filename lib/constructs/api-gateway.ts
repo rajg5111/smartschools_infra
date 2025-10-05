@@ -101,6 +101,11 @@ export class ApiGatewayConstruct extends Construct {
       ],
     });
 
+    // Set the CloudWatch role for API Gateway logging (must be done before creating the API)
+    const account = new apigateway.CfnAccount(this, "ApiGatewayAccount", {
+      cloudWatchRoleArn: apiGatewayLogRole.roleArn,
+    });
+
     // Create the API Gateway
     this.api = new apigateway.RestApi(this, "Api", {
       restApiName: props.apiName,
@@ -180,6 +185,9 @@ export class ApiGatewayConstruct extends Construct {
       //? apigateway.ApiKeySourceType.HEADER
       //: undefined,
     });
+
+    // Ensure the API Gateway depends on the account configuration
+    this.api.node.addDependency(account);
 
     // Store root resource for easy access
     this.rootResource = this.api.root;

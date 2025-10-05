@@ -1,0 +1,19 @@
+{
+  "name": "schools-get-lambda",
+  "version": "1.0.0",
+  "description": "Get School Lambda function",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1490.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "lambda",
+    "school",
+    "get"
+  ],
+  "author": "",
+  "license": "ISC"
+}
