@@ -6,6 +6,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
+import { env } from "process";
 
 export interface ApiGatewayConstructProps {
   /**
@@ -19,9 +20,9 @@ export interface ApiGatewayConstructProps {
   description?: string;
 
   /**
-   * Environment stage (dev, staging, prod)
+   * Environment (dev, staging, prod)
    */
-  stage: string;
+  environment: string;
 
   /**
    * Enable CORS for the API Gateway
@@ -82,11 +83,11 @@ export class ApiGatewayConstruct extends Construct {
   constructor(scope: Construct, id: string, props: ApiGatewayConstructProps) {
     super(scope, id);
 
-    const stage = props.stage;
+    const environment = props.environment;
 
     // Create CloudWatch Log Group for API Gateway
     this.logGroup = new logs.LogGroup(this, "ApiGatewayLogGroup", {
-      logGroupName: `/aws/apigateway/${stage}/${props.apiName}`,
+      logGroupName: `/aws/apigateway/prod/${props.apiName}`,
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -115,9 +116,10 @@ export class ApiGatewayConstruct extends Construct {
         types: [apigateway.EndpointType.REGIONAL], // Regional endpoints are recommended
       },
       // Disable execute-api endpoint for production
-      disableExecuteApiEndpoint: stage === "prod" && !!props?.customDomain,
+      disableExecuteApiEndpoint:
+        environment === "prod" && !!props?.customDomain,
       deployOptions: {
-        stageName: stage,
+        stageName: "prod",
         // Enhanced logging
         accessLogDestination: new apigateway.LogGroupLogDestination(
           this.logGroup
@@ -138,7 +140,7 @@ export class ApiGatewayConstruct extends Construct {
         // CloudWatch metrics
         metricsEnabled: props?.enableDetailedMetrics ?? true,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: stage !== "prod", // Disable data trace in production for security
+        dataTraceEnabled: environment !== "prod", // Disable data trace in production for security
         // Throttling
         throttlingRateLimit: props?.throttlingRateLimit || 1000,
         throttlingBurstLimit: props?.throttlingBurstLimit || 2000,
@@ -192,43 +194,9 @@ export class ApiGatewayConstruct extends Construct {
     // Store root resource for easy access
     this.rootResource = this.api.root;
 
-    // Create API Key and Usage Plan if enabled
-    /*if (props?.enableApiKey) {
-      this.apiKey = new apigateway.ApiKey(this, "ApiKey", {
-        apiKeyName: `${props?.apiName || "SmartSchools"}-${stage}-key`,
-        description: `API Key for ${
-          props?.apiName || "SmartSchools API"
-        } ${stage} environment`,
-        enabled: true,
-      });
-
-      this.usagePlan = new apigateway.UsagePlan(this, "UsagePlan", {
-        name: `${props?.apiName || "SmartSchools"}-${stage}-usage-plan`,
-        description: `Usage plan for ${
-          props?.apiName || "SmartSchools API"
-        } ${stage} environment`,
-        throttle: {
-          rateLimit: props?.throttlingRateLimit || 1000,
-          burstLimit: props?.throttlingBurstLimit || 2000,
-        },
-        quota: {
-          limit: 10000,
-          period: apigateway.Period.DAY,
-        },
-        apiStages: [
-          {
-            api: this.api,
-            stage: this.api.deploymentStage,
-          },
-        ],
-      });
-
-      this.usagePlan.addApiKey(this.apiKey);
-    }*/
-
     // Add WAF if enabled
     if (props.enableWaf) {
-      this.addWafProtection(stage);
+      this.addWafProtection(environment);
     }
 
     // Add request/response models for validation
@@ -243,7 +211,7 @@ export class ApiGatewayConstruct extends Construct {
     this.addMonitoringAndAlerts();
 
     // Create outputs
-    this.createOutputs(stage, props?.customDomain);
+    this.createOutputs(props?.customDomain);
   }
 
   /**
@@ -439,11 +407,11 @@ export class ApiGatewayConstruct extends Construct {
 
   /**
    * Add WAF (Web Application Firewall) protection to the API Gateway
-   * @param stage The deployment stage
+   * @param environment The deployment environment
    */
-  private addWafProtection(stage: string): void {
+  private addWafProtection(environment: string): void {
     // Create IP Set for allowlist
-    const ipSet = this.createIPSet(stage);
+    const ipSet = this.createIPSet(environment);
 
     // Define WAF rules
     const rules: wafv2.CfnWebACL.RuleProperty[] = [
@@ -512,13 +480,16 @@ export class ApiGatewayConstruct extends Construct {
       defaultAction: {
         allow: {},
       },
-      name: `${this.api.restApiName.replace(/\s+/g, "-")}-${stage}-waf`,
+      name: `${this.api.restApiName.replace(/\s+/g, "-")}-${environment}-waf`,
       description: `WAF for ${this.api.restApiName} API Gateway`,
       rules: rules,
       visibilityConfig: {
         sampledRequestsEnabled: true,
         cloudWatchMetricsEnabled: true,
-        metricName: `${this.api.restApiName.replace(/\s+/g, "-")}-${stage}-waf`,
+        metricName: `${this.api.restApiName.replace(
+          /\s+/g,
+          "-"
+        )}-${environment}-waf`,
       },
     });
 
@@ -526,17 +497,17 @@ export class ApiGatewayConstruct extends Construct {
     new wafv2.CfnWebACLAssociation(this, "WebACLAssociation", {
       resourceArn: `arn:aws:apigateway:${
         cdk.Stack.of(this).region
-      }::/restapis/${this.api.restApiId}/stages/${stage}`,
+      }::/restapis/${this.api.restApiId}/stages/${environment}`,
       webAclArn: webAcl.attrArn,
     });
   }
 
   /**
    * Create an IP set for WAF allowlist
-   * @param stage The deployment stage
+   * @param environment The deployment environment
    * @returns The created IP set
    */
-  private createIPSet(stage: string): wafv2.CfnIPSet {
+  private createIPSet(environment: string): wafv2.CfnIPSet {
     const ipSet = new wafv2.CfnIPSet(this, "AllowedIPSet", {
       scope: "REGIONAL",
       ipAddressVersion: "IPV4",
@@ -547,7 +518,10 @@ export class ApiGatewayConstruct extends Construct {
         // Add your specific IP addresses here
         // "203.0.113.0/24", // Example public IP range
       ],
-      name: `${this.api.restApiName.replace(/\s+/g, "-")}-${stage}-allowed-ips`,
+      name: `${this.api.restApiName.replace(
+        /\s+/g,
+        "-"
+      )}-${environment}-allowed-ips`,
       description: `Allowed IP addresses for ${this.api.restApiName} API`,
     });
 
@@ -738,13 +712,13 @@ export class ApiGatewayConstruct extends Construct {
 
   /**
    * Create CloudFormation outputs
-   * @param stage The deployment stage
+   * @param environment The deployment environment
    * @param customDomain Custom domain configuration
    */
-  private createOutputs(
-    stage: string,
-    customDomain?: { domainName: string; certificateArn: string }
-  ): void {
+  private createOutputs(customDomain?: {
+    domainName: string;
+    certificateArn: string;
+  }): void {
     new cdk.CfnOutput(this, "ApiGatewayUrl", {
       value: this.api.url,
       description: "API Gateway URL",

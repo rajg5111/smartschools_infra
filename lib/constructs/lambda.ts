@@ -2,7 +2,6 @@ import * as cdk from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as ecr from "aws-cdk-lib/aws-ecr";
 import { Construct } from "constructs";
 
 /**
@@ -19,11 +18,6 @@ export interface DockerLambdaConfig {
    */
   dockerImage: {
     /**
-     * Existing ECR image URI (optional)
-     */
-    imageUri?: string;
-
-    /**
      * Docker build configuration (optional)
      */
     build?: {
@@ -31,21 +25,6 @@ export interface DockerLambdaConfig {
        * Path to the directory containing the Dockerfile
        */
       directory: string;
-
-      /**
-       * Dockerfile name (default: 'Dockerfile')
-       */
-      file?: string;
-
-      /**
-       * Build arguments
-       */
-      buildArgs?: { [key: string]: string };
-
-      /**
-       * Target stage for multi-stage builds
-       */
-      target?: string;
     };
   };
 
@@ -138,7 +117,8 @@ export interface LambdaConstructProps {
  * Lambda construct for creating Docker-based Lambda functions
  */
 export class LambdaConstruct extends Construct {
-  public readonly functions: Map<string, lambda.Function> = new Map();
+  public readonly functions: Map<string, lambda.DockerImageFunction> =
+    new Map();
   public readonly executionRoles: Map<string, iam.Role> = new Map();
 
   constructor(scope: Construct, id: string, props: LambdaConstructProps) {
@@ -174,7 +154,7 @@ export class LambdaConstruct extends Construct {
     environment: string,
     projectName: string
   ): void {
-    const functionName = `${config.functionName}-${environment}`;
+    const functionName = `${environment.toLowerCase()}-${config.functionName}`;
 
     // Create execution role
     const executionRole = new iam.Role(
@@ -215,49 +195,33 @@ export class LambdaConstruct extends Construct {
       });
     }
 
-    // Determine the Lambda code source
-    let code: lambda.Code;
+    // Create log group
+    const logGroup = new logs.LogGroup(this, `${config.functionName}LogGroup`, {
+      retention: config.logRetention || logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      logGroupName: `/aws/lambda/${functionName}`,
+    });
 
-    if (config.dockerImage.imageUri) {
-      // Use existing ECR image URI
-      code = lambda.Code.fromEcrImage(
-        ecr.Repository.fromRepositoryArn(
-          this,
-          `${config.functionName}Repository`,
-          config.dockerImage.imageUri
-        )
-      );
-    } else if (config.dockerImage.build) {
-      // Build Docker image from source
-      const buildOptions: any = {
-        file: config.dockerImage.build.file,
-        buildArgs: config.dockerImage.build.buildArgs,
-      };
+    // Determine the Docker image code source
+    let code: lambda.DockerImageCode;
 
-      // Add target if specified (for multi-stage builds)
-      if (config.dockerImage.build.target) {
-        buildOptions.target = config.dockerImage.build.target;
-      }
-
-      code = lambda.Code.fromDockerBuild(
-        config.dockerImage.build.directory,
-        buildOptions
+    if (config.dockerImage.build) {
+      code = lambda.DockerImageCode.fromImageAsset(
+        config.dockerImage.build.directory
       );
     } else {
       throw new Error(
-        `Either imageUri or build configuration must be provided for ${config.functionName}`
+        `Build configuration must be provided for ${config.functionName}`
       );
     }
 
-    // Create the Lambda function
-    const lambdaFunction = new lambda.Function(
+    // Create the Lambda function using DockerImageFunction
+    const lambdaFunction = new lambda.DockerImageFunction(
       this,
       `${config.functionName}Function`,
       {
         functionName: functionName,
-        runtime: lambda.Runtime.FROM_IMAGE,
         code: code,
-        handler: lambda.Handler.FROM_IMAGE,
         role: executionRole,
         environment: config.environment,
         timeout: config.timeout,
@@ -267,7 +231,7 @@ export class LambdaConstruct extends Construct {
         tracing: config.enableTracing
           ? lambda.Tracing.ACTIVE
           : lambda.Tracing.DISABLED,
-        logRetention: config.logRetention || logs.RetentionDays.ONE_WEEK,
+        logGroup: logGroup,
       }
     );
 
@@ -280,7 +244,6 @@ export class LambdaConstruct extends Construct {
           resources: [lambdaFunction.functionArn],
         })
       );
-      // Note: Reserved concurrency must be set via API call or console after deployment
     }
 
     // Store references
@@ -310,7 +273,9 @@ export class LambdaConstruct extends Construct {
   /**
    * Get a Lambda function by name
    */
-  public getFunction(functionName: string): lambda.Function | undefined {
+  public getFunction(
+    functionName: string
+  ): lambda.DockerImageFunction | undefined {
     return this.functions.get(functionName);
   }
 

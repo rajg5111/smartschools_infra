@@ -7,53 +7,51 @@ import {
 } from "./constructs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as apigateway from "aws-cdk-lib/aws-apigateway";
 
 export interface SmartschoolsInfraStackProps extends cdk.StackProps {
-  state?: string;
-  environment?: string;
+  //  state?: string;
+  environment: string;
 }
 
 export class SmartschoolsInfraStack extends cdk.Stack {
   private readonly context: {
-    state: string;
+    // state?: string;
     environment: string;
   };
 
   constructor(
     scope: Construct,
     id: string,
-    props?: SmartschoolsInfraStackProps
+    props: SmartschoolsInfraStackProps
   ) {
     super(scope, id, props);
 
     // Extract context from props, CDK context, or use defaults
     this.context = {
-      state: props?.state || this.node.tryGetContext("state") || "dev",
-      environment:
-        props?.environment ||
-        this.node.tryGetContext("environment") ||
-        "development",
+      // state: props?.state,
+      environment: props.environment,
     };
 
     // Use state as stage for API Gateway
-    const stage = this.context.state;
+    // const stage = this.context.state;
 
     // Create enhanced API Gateway with best practices
-    const apiGateway = new ApiGatewayConstruct(this, "SmartSchoolsApiGateway", {
-      apiName: "SmartSchoolsAPI",
+    const apiGateway = new ApiGatewayConstruct(this, "AdminApiGateway", {
+      apiName: `SchoolAPI-${this.context.environment}`,
       description:
         "REST API for SmartSchools application with enterprise-grade security and monitoring",
-      stage: stage,
+      environment: this.context.environment,
       enableCors: true,
       corsOrigins: this.getCorsOrigins(this.context.environment),
       enableValidation: true,
       //enableApiKey: this.context.environment === "production",
-      throttlingRateLimit: this.getThrottlingRateLimit(
-        this.context.environment
-      ),
-      throttlingBurstLimit: this.getThrottlingBurstLimit(
-        this.context.environment
-      ),
+      // throttlingRateLimit: this.getThrottlingRateLimit(
+      //   this.context.environment
+      // ),
+      // throttlingBurstLimit: this.getThrottlingBurstLimit(
+      //   this.context.environment
+      // ),
       enableWaf: false,
       enableDetailedMetrics: false,
     });
@@ -64,14 +62,14 @@ export class SmartschoolsInfraStack extends cdk.Stack {
     const readOnlyRole = new iam.Role(this, "DynamoDBReadOnlyRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
       description: `Read-only access to DynamoDB tables`,
-      roleName: `DynamoDB-ReadOnly-${this.node.tryGetContext("environment")}`,
+      roleName: `DynamoDB-ReadOnly-${this.context.environment}`,
     });
 
     // Read-write role for application operations
     const readWriteRole = new iam.Role(this, "DynamoDBReadWriteRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
       description: `Read-write access to DynamoDB tables`,
-      roleName: `DynamoDB-ReadWrite-${this.node.tryGetContext("environment")}`,
+      roleName: `DynamoDB-ReadWrite-${this.context.environment}`,
     });
     const basicLambdaPolicy = iam.ManagedPolicy.fromAwsManagedPolicyName(
       "service-role/AWSLambdaBasicExecutionRole"
@@ -147,7 +145,6 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           dockerImage: {
             build: {
               directory: "./lambda/schools-list",
-              file: "Dockerfile",
             },
           },
           description: "List all schools with pagination support",
@@ -171,7 +168,6 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           dockerImage: {
             build: {
               directory: "./lambda/schools-create",
-              file: "Dockerfile",
             },
           },
           description: "Create a new school record",
@@ -195,7 +191,6 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           dockerImage: {
             build: {
               directory: "./lambda/schools-get",
-              file: "Dockerfile",
             },
           },
           description: "Get a specific school by ID",
@@ -219,7 +214,6 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           dockerImage: {
             build: {
               directory: "./lambda/schools-update",
-              file: "Dockerfile",
             },
           },
           description: "Update an existing school record",
@@ -243,7 +237,6 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           dockerImage: {
             build: {
               directory: "./lambda/schools-delete",
-              file: "Dockerfile",
             },
           },
           description: "Delete a school record (soft or hard delete)",
@@ -265,26 +258,7 @@ export class SmartschoolsInfraStack extends cdk.Stack {
             }),
           ],
         },
-        // {
-        //   functionName: "school-notification",
-        //   dockerImage: {
-        //     build: {
-        //       directory: "./lambda/school-notification",
-        //       file: "Dockerfile",
-        //     },
-        //   },
-        //   description: "School notification service for sending alerts",
-        //   timeout: cdk.Duration.seconds(45),
-        //   memorySize: 256,
-        //   enableTracing: false,
-        //   additionalPolicies: [
-        //     new iam.PolicyStatement({
-        //       effect: iam.Effect.ALLOW,
-        //       actions: ["ses:SendEmail", "ses:SendRawEmail", "sns:Publish"],
-        //       resources: ["*"],
-        //     }),
-        //   ],
-        // },
+        // Additional Lambda functions can be added here
       ],
     });
 
@@ -292,10 +266,12 @@ export class SmartschoolsInfraStack extends cdk.Stack {
     // This is already handled by the additionalPolicies above, but here's an alternative approach:
     // dynamoDBConstruct.table.grantReadWriteData(lambdaConstruct.getFunction("school-api")!);
 
+    // Integrate Lambda functions with API Gateway
+    this.addApiResources(apiGateway, lambdaConstruct);
+
     // Add tags for better resource management
     cdk.Tags.of(this).add("Project", "SmartSchools");
     cdk.Tags.of(this).add("Environment", this.context.environment);
-    cdk.Tags.of(this).add("State", this.context.state);
     cdk.Tags.of(this).add("ManagedBy", "CDK");
   }
 
@@ -322,101 +298,198 @@ export class SmartschoolsInfraStack extends cdk.Stack {
   }
 
   /**
-   * Get throttling rate limit based on environment
+   * Add API resources with proper structure, validation, and Lambda integrations
    */
-  private getThrottlingRateLimit(environment: string): number {
-    switch (environment) {
-      case "production":
-        return 1000;
-      case "staging":
-        return 500;
-      case "development":
-      default:
-        return 100;
-    }
-  }
-
-  /**
-   * Get throttling burst limit based on environment
-   */
-  private getThrottlingBurstLimit(environment: string): number {
-    switch (environment) {
-      case "production":
-        return 2000;
-      case "staging":
-        return 1000;
-      case "development":
-      default:
-        return 200;
-    }
-  }
-
-  /**
-   * Add API resources with proper structure
-   */
-  private addApiResources(apiGateway: ApiGatewayConstruct): void {
+  private addApiResources(
+    apiGateway: ApiGatewayConstruct,
+    lambdaConstruct: LambdaConstruct
+  ): void {
     // Create API version prefix
     const v1Resource = apiGateway.addResource("v1");
 
-    // Authentication endpoints
-    const authResource = apiGateway.addResource("auth", v1Resource);
-    // authResource.addMethod("POST"); // Login endpoint
-    // authResource.addResource("refresh").addMethod("POST"); // Token refresh
-    // authResource.addResource("logout").addMethod("POST"); // Logout
-
     // Schools management endpoints
     const schoolsResource = apiGateway.addResource("schools", v1Resource);
-    // schoolsResource.addMethod("GET"); // List schools
-    // schoolsResource.addMethod("POST"); // Create school
-    // schoolsResource.addResource("{schoolId}").addMethod("GET"); // Get specific school
-    // schoolsResource.addResource("{schoolId}").addMethod("PUT"); // Update school
-    // schoolsResource.addResource("{schoolId}").addMethod("DELETE"); // Delete school
 
-    // Users management endpoints
-    const usersResource = apiGateway.addResource("users", v1Resource);
-    // usersResource.addMethod("GET"); // List users
-    // usersResource.addMethod("POST"); // Create user
-    // usersResource.addResource("{userId}").addMethod("GET"); // Get specific user
-    // usersResource.addResource("{userId}").addMethod("PUT"); // Update user
-    // usersResource.addResource("{userId}").addMethod("DELETE"); // Delete user
+    // Get Lambda function references
+    const schoolsListFunction = lambdaConstruct.getFunction("schools-list");
+    const schoolsCreateFunction = lambdaConstruct.getFunction("schools-create");
+    const schoolsGetFunction = lambdaConstruct.getFunction("schools-get");
+    const schoolsUpdateFunction = lambdaConstruct.getFunction("schools-update");
+    const schoolsDeleteFunction = lambdaConstruct.getFunction("schools-delete");
 
-    // Administrative endpoints
-    const adminResource = apiGateway.addResource("admin", v1Resource);
-    // adminResource.addResource("metrics").addMethod("GET"); // System metrics
-    // adminResource.addResource("logs").addMethod("GET"); // System logs
+    // Create validation models and validators
+    const { createSchoolModel, updateSchoolModel } =
+      this.createSchoolValidationModels(apiGateway);
+    const requestValidator = apiGateway.createRequestValidator(
+      "SchoolRequestValidator",
+      true,
+      true
+    );
 
-    // File upload/download endpoints
-    const filesResource = apiGateway.addResource("files", v1Resource);
-    // filesResource.addMethod("POST"); // Upload file
-    // filesResource.addResource("{fileId}").addMethod("GET"); // Download file
-    // filesResource.addResource("{fileId}").addMethod("DELETE"); // Delete file
+    // Schools endpoints with Lambda integrations and validation
+    if (schoolsListFunction) {
+      // GET /v1/schools - List all schools (query parameter validation)
+      apiGateway.addLambdaIntegration(
+        schoolsResource,
+        "GET",
+        schoolsListFunction,
+        {
+          requestValidator: requestValidator,
+          requestParameters: {
+            "method.request.querystring.limit": false,
+            "method.request.querystring.offset": false,
+            "method.request.querystring.search": false,
+          },
+        }
+      );
+    }
+
+    if (schoolsCreateFunction) {
+      // POST /v1/schools - Create a new school (body validation)
+      apiGateway.addLambdaIntegration(
+        schoolsResource,
+        "POST",
+        schoolsCreateFunction,
+        {
+          requestValidator: requestValidator,
+          requestModels: {
+            "application/json": createSchoolModel,
+          },
+        }
+      );
+    }
+
+    // School by ID resource
+    const schoolByIdResource = apiGateway.addResource(
+      "{schoolId}",
+      schoolsResource
+    );
+
+    if (schoolsGetFunction) {
+      // GET /v1/schools/{schoolId} - Get specific school (path parameter validation)
+      apiGateway.addLambdaIntegration(
+        schoolByIdResource,
+        "GET",
+        schoolsGetFunction,
+        {
+          requestValidator: requestValidator,
+          requestParameters: {
+            "method.request.path.schoolId": true, // Required path parameter
+          },
+        }
+      );
+    }
+
+    if (schoolsUpdateFunction) {
+      // PUT /v1/schools/{schoolId} - Update school (path + body validation)
+      apiGateway.addLambdaIntegration(
+        schoolByIdResource,
+        "PUT",
+        schoolsUpdateFunction,
+        {
+          requestValidator: requestValidator,
+          requestParameters: {
+            "method.request.path.schoolId": true, // Required path parameter
+          },
+          requestModels: {
+            "application/json": updateSchoolModel,
+          },
+        }
+      );
+    }
+
+    if (schoolsDeleteFunction) {
+      // DELETE /v1/schools/{schoolId} - Delete school (path parameter validation)
+      apiGateway.addLambdaIntegration(
+        schoolByIdResource,
+        "DELETE",
+        schoolsDeleteFunction,
+        {
+          requestValidator: requestValidator,
+          requestParameters: {
+            "method.request.path.schoolId": true, // Required path parameter
+            "method.request.querystring.soft": false, // Optional query param for soft delete
+          },
+        }
+      );
+    }
   }
 
   /**
-   * Get the current context (state and environment)
+   * Create JSON Schema validation models for school endpoints
+   * Models match the exact DynamoDB table structure defined in this stack
    */
-  public getContext(): { state: string; environment: string } {
-    return { ...this.context };
-  }
 
-  /**
-   * Check if the current environment is production
-   */
-  public isProduction(): boolean {
-    return this.context.environment === "production";
-  }
+  private createSchoolValidationModels(apiGateway: ApiGatewayConstruct): {
+    createSchoolModel: any;
+    updateSchoolModel: any;
+  } {
+    const schoolProperties = {
+      school_name: {
+        type: apigateway.JsonSchemaType.STRING,
+        minLength: 2,
+        maxLength: 100,
+        description: "Official name of the school (GSI partition key)",
+      },
+      location: {
+        type: apigateway.JsonSchemaType.STRING,
+        minLength: 2,
+        maxLength: 100,
+        description: "School location - city, suburb, etc. (GSI sort key)",
+      },
+      primary_contact_email: {
+        type: apigateway.JsonSchemaType.STRING,
+        format: "email",
+        maxLength: 100,
+        description: "Primary contact's email address",
+      },
+      primary_contact_phone: {
+        type: apigateway.JsonSchemaType.STRING,
+        pattern: "^[+]?[0-9\\s\\-\\(\\)]{8,20}$",
+        description: "Primary contact's phone number",
+      },
+      primary_contact_staff_id: {
+        type: apigateway.JsonSchemaType.STRING,
+        minLength: 1,
+        maxLength: 50,
+        description: "Primary contact's staff ID",
+      },
+    };
+    // School creation model - matches DynamoDB table structure exactly
+    const createSchoolModel = apiGateway.addModel("CreateSchoolModel", {
+      type: apigateway.JsonSchemaType.OBJECT,
+      required: [
+        "school_unique_code",
+        "school_name",
+        "location",
+        "primary_contact_email",
+        "primary_contact_phone",
+        "primary_contact_staff_id",
+      ],
+      properties: {
+        ...schoolProperties,
+        school_unique_code: {
+          type: apigateway.JsonSchemaType.STRING,
+          minLength: 3,
+          maxLength: 50,
+          pattern: "^[A-Z0-9_-]+$",
+          description: "Unique identifier for the school (partition key)",
+        },
+      },
+      additionalProperties: true, // Allow additional attributes as DynamoDB is schema-less
+    });
 
-  /**
-   * Check if the current state is prod
-   */
-  public isProdState(): boolean {
-    return this.context.state === "prod";
-  }
+    // School update model - all DynamoDB fields optional except school_unique_code cannot be updated
+    const updateSchoolModel = apiGateway.addModel("UpdateSchoolModel", {
+      type: apigateway.JsonSchemaType.OBJECT,
+      minProperties: 1, // At least one field must be provided for update
+      properties: schoolProperties,
+      additionalProperties: true, // Allow additional attributes as DynamoDB is schema-less
+    });
 
-  /**
-   * Get environment-specific resource name
-   */
-  public getResourceName(baseName: string): string {
-    return `${baseName}-${this.context.state}-${this.context.environment}`;
+    return {
+      createSchoolModel,
+      updateSchoolModel,
+    };
   }
 }
