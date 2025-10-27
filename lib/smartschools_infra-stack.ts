@@ -4,6 +4,7 @@ import {
   ApiGatewayConstruct,
   DynamoDBConstruct,
   LambdaConstruct,
+  S3WebsiteConstruct,
 } from "./constructs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -266,6 +267,21 @@ export class SmartschoolsInfraStack extends cdk.Stack {
     // This is already handled by the additionalPolicies above, but here's an alternative approach:
     // dynamoDBConstruct.table.grantReadWriteData(lambdaConstruct.getFunction("school-api")!);
 
+    // Create S3 bucket with CloudFront for website hosting
+    const website = new S3WebsiteConstruct(this, "SmartSchoolsWebsite", {
+      environment: this.context.environment,
+      projectName: "SmartSchools",
+      enableCloudFront: true,
+      enableVersioning: this.context.environment === "production",
+      defaultRootObject: "index.html",
+      errorPage: "index.html", // For SPA routing
+      // Uncomment below to deploy from a local directory
+      // websiteSourcePath: "../smartschools_admin/dist",
+      // Uncomment below for custom domain (requires certificate in us-east-1)
+      // domainName: "app.smartschools.com",
+      // certificateArn: "arn:aws:us-east-1:123456789012:certificate/...",
+    });
+
     // Integrate Lambda functions with API Gateway
     this.addApiResources(apiGateway, lambdaConstruct);
 
@@ -285,15 +301,22 @@ export class SmartschoolsInfraStack extends cdk.Stack {
           "https://smartschools.com",
           "https://www.smartschools.com",
           "https://app.smartschools.com",
+          "https://smartskools.online",
         ];
       case "staging":
         return [
           "https://staging.smartschools.com",
           "https://staging-app.smartschools.com",
+          "https://smartskools.online",
         ];
       case "development":
       default:
-        return ["http://localhost:3000", "http://localhost:5173"]; // Common dev ports
+        return [
+          "http://localhost:3000",
+          "http://localhost:5173",
+          "http://127.0.0.1:5173",
+          "https://smartskools.online",
+        ]; // Common dev ports
     }
   }
 
