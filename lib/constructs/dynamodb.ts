@@ -185,7 +185,7 @@ export class DynamoDBConstruct extends Construct {
     // Create table dynamically based on the table definitions
     this.table = new dynamodb.Table(this, `${props.table.tableName}`, {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       tableName: `${props.table.tableName}-${environment}`,
       partitionKey: props.table.partitionKey,
