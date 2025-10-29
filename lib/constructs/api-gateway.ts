@@ -4,6 +4,8 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
+import * as ssm from "aws-cdk-lib/aws-ssm";
+import * as fn from "aws-cdk-lib/aws-lambda";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
 import { env } from "process";
@@ -79,6 +81,7 @@ export class ApiGatewayConstruct extends Construct {
   public readonly apiKey?: apigateway.ApiKey;
   public readonly usagePlan?: apigateway.UsagePlan;
   public readonly logGroup: logs.LogGroup;
+  public readonly jwtAuthorizer?: apigateway.IAuthorizer;
 
   constructor(scope: Construct, id: string, props: ApiGatewayConstructProps) {
     super(scope, id);
@@ -188,6 +191,34 @@ export class ApiGatewayConstruct extends Construct {
       //: undefined,
     });
 
+    // Try to import an external JWT authorizer Lambda ARN from SSM and create a TokenAuthorizer.
+    // Parameter name follows the OTP service convention: /{env}/auth/authorizer_lambda_arn
+    try {
+      const authorizerArn = ssm.StringParameter.valueForStringParameter(
+        this,
+        `/${environment}/auth/authorizer_lambda_arn`
+      );
+
+      if (authorizerArn) {
+        const importedAuthorizerFn = fn.Function.fromFunctionArn(
+          this,
+          "ImportedOtpAuthorizer",
+          authorizerArn
+        );
+
+        this.jwtAuthorizer = new apigateway.TokenAuthorizer(
+          this,
+          "ImportedJwtAuthorizer",
+          {
+            handler: importedAuthorizerFn,
+            identitySource: "method.request.header.Authorization",
+          }
+        );
+      }
+    } catch (e) {
+      // Parameter missing or unable to read from SSM; proceed without an authorizer
+    }
+
     // Ensure the API Gateway depends on the account configuration
     this.api.node.addDependency(account);
 
@@ -291,7 +322,9 @@ export class ApiGatewayConstruct extends Construct {
     options?: Partial<apigateway.MethodOptions>
   ): apigateway.Method {
     const defaultOptions: apigateway.MethodOptions = {
-      authorizationType: apigateway.AuthorizationType.NONE,
+      authorizationType: this.jwtAuthorizer
+        ? apigateway.AuthorizationType.CUSTOM
+        : apigateway.AuthorizationType.NONE,
       apiKeyRequired: !!this.apiKey,
       requestValidator: options?.requestValidator,
       methodResponses: [
@@ -352,6 +385,8 @@ export class ApiGatewayConstruct extends Construct {
       }),
       {
         ...defaultOptions,
+        // If we have a jwtAuthorizer, attach it as the method authorizer by default
+        ...(this.jwtAuthorizer ? { authorizer: this.jwtAuthorizer } : {}),
         ...options,
       }
     );
